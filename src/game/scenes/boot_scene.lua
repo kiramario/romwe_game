@@ -46,7 +46,7 @@ function BootScene:enter(params)
         -- 提示文字
         local hint_font = love.graphics.newFont(16)
         love.graphics.setFont(hint_font)
-        local hint = "按 空格键 进入测试场景"
+        local hint = "按 空格 或 回车 开始游戏"
         local hint_w = hint_font:getWidth(hint)
         love.graphics.setColor(0.5, 0.5, 0.5, 1)
         love.graphics.print(hint, (w - hint_w) / 2, h / 2 + 60)

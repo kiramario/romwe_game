@@ -37,9 +37,37 @@ local _stack = {}
 
 -- 是否有挂起的场景切换（在下一帧开头执行）
 -- 避免在 update 中间切换场景导致状态不一致
+-- V1 之后用过渡动画替代，但变量保留用于兼容
 local _pending_switch = nil
 local _pending_push = nil
 local _pending_pop = false
+
+-- ============================================================
+-- 场景过渡动画
+-- ============================================================
+
+-- 过渡状态常量
+local TRANSITION_STATE = {
+    IDLE = "idle",       -- 没有过渡
+    FADING_OUT = "out",  -- 淡出（变黑）
+    FADING_IN = "in",    -- 淡入（变明）
+}
+
+-- 过渡配置（内部状态）
+local _transition = {
+    state = TRANSITION_STATE.IDLE,
+    progress = 0,        -- 0-1，过渡进度
+    duration = 0.3,      -- 过渡时长（秒）
+    pending_scene = nil, -- 过渡结束后要切换的场景
+    pending_params = nil,
+    pending_type = nil,  -- "switch", "push", "pop"
+}
+
+-- 过渡函数的前向声明（Lua 作用域规则：local 变量在声明后才可见）
+-- 这些函数在文件后面定义
+local _start_transition
+local _update_transition
+local _draw_transition
 
 -- ============================================================
 -- 内部函数
@@ -243,7 +271,7 @@ end
 
 -- 切换场景（替换当前场景）
 -- 旧场景会被销毁（exit）
--- 注意：切换在下一帧开始时生效，不在当前帧执行
+-- 带有淡入淡出过渡效果
 -- 类比: history.replace 或 router.replace
 -- @param name (string) 场景名
 -- @param params (table) 传给新场景 enter 的参数
@@ -253,13 +281,13 @@ function SceneManager.switch(name, params)
         return false
     end
 
-    -- 设置挂起的切换，在下一帧 update 开始时执行
-    -- 避免在当前帧的 update/draw 中间切换导致问题
-    _pending_switch = { name = name, params = params }
-    _pending_push = nil
-    _pending_pop = false
+    -- 如果正在过渡中，忽略请求
+    if _transition.state ~= TRANSITION_STATE.IDLE then
+        Logger.warn("SceneManager: transition in progress, ignoring switch")
+        return false
+    end
 
-    return true
+    return _start_transition("switch", name, params)
 end
 
 -- 压入场景（保留当前场景在栈下）
@@ -273,10 +301,12 @@ function SceneManager.push(name, params)
         return false
     end
 
-    _pending_push = { name = name, params = params }
-    _pending_switch = nil
+    if _transition.state ~= TRANSITION_STATE.IDLE then
+        Logger.warn("SceneManager: transition in progress, ignoring push")
+        return false
+    end
 
-    return true
+    return _start_transition("push", name, params)
 end
 
 -- 弹出场景（回到上一个场景）
@@ -287,10 +317,12 @@ function SceneManager.pop()
         return false
     end
 
-    _pending_pop = true
-    _pending_switch = nil
+    if _transition.state ~= TRANSITION_STATE.IDLE then
+        Logger.warn("SceneManager: transition in progress, ignoring pop")
+        return false
+    end
 
-    return true
+    return _start_transition("pop", nil, nil)
 end
 
 -- ============================================================
@@ -332,23 +364,13 @@ end
 -- 由主循环的 love.update 调用
 -- @param dt (number) 距上一帧的时间（秒）
 function SceneManager.update(dt)
-    -- 先处理挂起的场景切换
-    if _pending_switch then
-        _do_switch(_pending_switch.name, _pending_switch.params)
-        _pending_switch = nil
-        -- 切换后这一帧的 update 就不执行了？
-        -- 还是执行吧，新场景也需要 update
-    end
+    -- 更新过渡动画
+    _update_transition(dt)
 
-    if _pending_push then
-        _do_push(_pending_push.name, _pending_push.params)
-        _pending_push = nil
-    end
-
-    if _pending_pop then
-        _do_pop()
-        _pending_pop = false
-    end
+    -- 如果正在过渡中，场景的 update 仍然执行吗？
+    -- 淡出阶段：当前场景还在显示，继续 update
+    -- 淡入阶段：新场景已经切换了，继续 update
+    -- 所以不管什么状态，都更新当前场景
 
     -- 更新当前场景
     local current = _get_current()
@@ -385,6 +407,101 @@ function SceneManager.draw()
         love.graphics.print("No scene loaded", 10, 10)
         love.graphics.setColor(1, 1, 1)
     end
+
+    -- 绘制过渡覆盖层
+    _draw_transition()
+end
+
+-- 设置过渡时长
+-- @param duration (number) 秒
+function SceneManager.set_transition_duration(duration)
+    _transition.duration = duration or 0.3
+end
+
+-- 检查是否正在过渡
+-- @return (boolean)
+function SceneManager.is_transitioning()
+    return _transition.state ~= TRANSITION_STATE.IDLE
+end
+
+-- 开始过渡（内部用）
+-- @param type (string) 切换类型: "switch", "push", "pop"
+-- @param scene_name (string) 场景名（pop 时为 nil）
+-- @param params (table) 参数
+_start_transition = function(switch_type, scene_name, params)
+    if _transition.state ~= TRANSITION_STATE.IDLE then
+        Logger.warn("SceneManager: transition already in progress, ignoring")
+        return false
+    end
+
+    _transition.state = TRANSITION_STATE.FADING_OUT
+    _transition.progress = 0
+    _transition.pending_type = switch_type
+    _transition.pending_scene = scene_name
+    _transition.pending_params = params
+
+    return true
+end
+
+-- 更新过渡动画
+_update_transition = function(dt)
+    if _transition.state == TRANSITION_STATE.IDLE then
+        return
+    end
+
+    _transition.progress = _transition.progress + dt / _transition.duration
+
+    if _transition.state == TRANSITION_STATE.FADING_OUT then
+        -- 淡出阶段
+        if _transition.progress >= 1 then
+            -- 淡出完成，执行切换
+            _transition.progress = 0
+            _transition.state = TRANSITION_STATE.FADING_IN
+
+            if _transition.pending_type == "switch" then
+                _do_switch(_transition.pending_scene, _transition.pending_params)
+            elseif _transition.pending_type == "push" then
+                _do_push(_transition.pending_scene, _transition.pending_params)
+            elseif _transition.pending_type == "pop" then
+                _do_pop()
+            end
+        end
+
+    elseif _transition.state == TRANSITION_STATE.FADING_IN then
+        -- 淡入阶段
+        if _transition.progress >= 1 then
+            -- 淡入完成，结束过渡
+            _transition.state = TRANSITION_STATE.IDLE
+            _transition.progress = 0
+            _transition.pending_scene = nil
+            _transition.pending_params = nil
+            _transition.pending_type = nil
+
+            -- 发布事件
+            EventBus.emit("scene:transition_complete")
+        end
+    end
+end
+
+-- 绘制过渡覆盖层
+_draw_transition = function()
+    if _transition.state == TRANSITION_STATE.IDLE then
+        return
+    end
+
+    local alpha
+    if _transition.state == TRANSITION_STATE.FADING_OUT then
+        -- 淡出：从透明到黑
+        alpha = _transition.progress
+    else
+        -- 淡入：从黑到透明
+        alpha = 1 - _transition.progress
+    end
+
+    -- 全屏黑色覆盖
+    love.graphics.setColor(0, 0, 0, alpha)
+    love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
 return SceneManager
