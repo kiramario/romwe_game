@@ -9,8 +9,7 @@ local RenderLayer = Core.RenderLayer
 local Input = Core.Input
 local SceneManager = Core.SceneManager
 local ResourceManager = Core.ResourceManager
-local EventBus = Core.EventBus
-local Utils = Core.Utils
+local AudioManager = Core.AudioManager
 
 local Button = require("src.game.ui.button")
 
@@ -151,6 +150,7 @@ function MenuScene:create_buttons()
         corner_radius = 8,
         on_click = function()
             Logger.debug("MenuScene: 开始游戏 按钮被点击")
+            AudioManager.play_sfx("click")
             SceneManager.switch("game")
         end,
     })
@@ -167,7 +167,9 @@ function MenuScene:create_buttons()
         font_path = "NotoSansSC-Regular.ttc",
         corner_radius = 8,
         on_click = function()
-            self:show_message("设置功能开发中... (V3 实现)")
+            Logger.debug("MenuScene: 设置 按钮被点击")
+            AudioManager.play_sfx("click")
+            SceneManager.push("settings")
         end,
     })
     table.insert(self.buttons, btn_settings)
@@ -183,7 +185,8 @@ function MenuScene:create_buttons()
         font_path = "NotoSansSC-Regular.ttc",
         corner_radius = 8,
         on_click = function()
-            self:show_message("中国象棋 v1.0.0\nTrillion Games 出品")
+            AudioManager.play_sfx("click")
+            self:show_message("中国象棋 v4.0.0\nTrillion Games 出品\n\n独立游戏开发项目\n基于 LÖVE2D 引擎")
         end,
     })
     table.insert(self.buttons, btn_about)
