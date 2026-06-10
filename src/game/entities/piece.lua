@@ -90,9 +90,21 @@ function Piece.new(options)
     self.alive = true       -- 是否存活
     self.selected = false   -- 是否被选中
 
-    -- 动画状态（V3 可能会用到移动动画，先留着结构）
-    self.render_offset_x = 0
+    -- 动画状态
+    self.animating = false       -- 是否正在动画中
+    self.anim_progress = 0       -- 动画进度 0-1
+    self.anim_duration = 0.25    -- 动画时长（秒）
+    self.anim_from_x = 0         -- 动画起点（棋盘坐标）
+    self.anim_from_y = 0
+    self.anim_to_x = 0           -- 动画终点
+    self.anim_to_y = 0
+    self.render_offset_x = 0     -- 渲染偏移（像素，用于动画）
     self.render_offset_y = 0
+
+    -- 被吃的动画
+    self.capturing = false       -- 正在被吃掉
+    self.capture_progress = 0
+    self.capture_duration = 0.3
 
     Logger.debugf("Piece: created %s %s at (%d,%d)",
         self.side, self.type, self.x, self.y)
@@ -136,6 +148,44 @@ function Piece:set_selected(selected)
 end
 
 -- ============================================================
+-- 移动动画
+-- ============================================================
+
+-- 开始移动动画（从当前位置到目标位置）
+-- 动画期间棋子的逻辑位置不变，只是视觉上在移动
+-- @param to_x, to_y (number) 目标棋盘坐标
+-- @param duration (number) 动画时长（秒），可选
+function Piece:start_move_animation(to_x, to_y, duration)
+    self.animating = true
+    self.anim_progress = 0
+    self.anim_duration = duration or 0.25
+    self.anim_from_x = self.x
+    self.anim_from_y = self.y
+    self.anim_to_x = to_x
+    self.anim_to_y = to_y
+    self.render_offset_x = 0
+    self.render_offset_y = 0
+end
+
+-- 开始被吃的动画（缩小消失）
+function Piece:start_capture_animation(duration)
+    self.capturing = true
+    self.capture_progress = 0
+    self.capture_duration = duration or 0.3
+end
+
+-- 检查动画是否完成
+function Piece:is_animation_done()
+    if self.animating then
+        return self.anim_progress >= 1
+    end
+    if self.capturing then
+        return self.capture_progress >= 1
+    end
+    return true
+end
+
+-- ============================================================
 -- 克隆棋子（用于规则推演时不修改原状态）
 -- ============================================================
 
@@ -156,55 +206,101 @@ end
 -- ============================================================
 
 function Piece:draw(board)
-    if not self.alive then
+    -- 被吃动画结束后就不画了
+    if not self.alive and not self.capturing then
         return
     end
 
+    -- 计算绘制位置
+    local draw_x, draw_y
+    if self.animating then
+        -- 移动动画中：在起点和终点之间插值
+        -- 用 easeOutQuad 缓动（先快后慢）
+        local t = self.anim_progress
+        local ease = 1 - (1 - t) * (1 - t)  -- easeOutQuad
+        draw_x = self.anim_from_x + (self.anim_to_x - self.anim_from_x) * ease
+        draw_y = self.anim_from_y + (self.anim_to_y - self.anim_from_y) * ease
+    else
+        draw_x = self.x
+        draw_y = self.y
+    end
+
     -- 棋盘坐标转屏幕坐标
-    local sx, sy = board:board_to_screen(self.x, self.y)
-    sx = sx + self.render_offset_x
-    sy = sy + self.render_offset_y
+    local sx, sy = board:board_to_screen(draw_x, draw_y)
 
     -- 棋子半径（占格子的 80% / 2）
-    local radius = board.cell_size * 0.4
+    local base_radius = board.cell_size * 0.4
+    local radius = base_radius
+
+    -- 透明度
+    local alpha = 1
+
+    -- 被吃动画：缩小 + 淡出
+    if self.capturing then
+        local t = self.capture_progress
+        -- 先放大一点再缩小（弹性效果）
+        if t < 0.3 then
+            radius = base_radius * (1 + t * 0.3)
+        else
+            radius = base_radius * (1.09 - (t - 0.3) * 1.3)
+        end
+        alpha = 1 - t
+
+        -- 不能变成负数
+        if radius < 1 then radius = 1 end
+        if alpha < 0 then alpha = 0 end
+    end
+
+    -- 选中时轻微放大（脉动效果）
+    local selected_pulse = 0
+    if self.selected and not self.capturing then
+        selected_pulse = math.sin(love.timer.getTime() * 4) * 1.5
+    end
+    radius = radius + selected_pulse * 0.1
 
     -- ========== 棋子阴影（增加纵深感） ==========
-    -- 阴影稍微往下偏一点
-    love.graphics.setColor(0, 0, 0, 0.3)
-    love.graphics.circle("fill", sx + 2, sy + 3, radius)
+    -- 阴影稍微往下偏一点，移动时阴影偏得更多（模拟高度）
+    local shadow_offset_y = 3
+    local shadow_offset_x = 2
+    if self.animating or self.capturing then
+        -- 动画中阴影加大，模拟棋子"飞起来"
+        shadow_offset_y = 5 + (1 - math.abs(self.anim_progress - 0.5) * 2) * 4
+    end
+
+    love.graphics.setColor(0, 0, 0, 0.25 * alpha)
+    love.graphics.circle("fill", sx + shadow_offset_x, sy + shadow_offset_y, radius)
 
     -- ========== 棋子主体 ==========
     -- 棋子底色（木质感觉）
     if self.side == "red" then
-        -- 红方：米黄色底 + 红色字
-        love.graphics.setColor(0.95, 0.9, 0.75, 1)
+        love.graphics.setColor(0.95, 0.9, 0.75, alpha)
     else
-        -- 黑方：略深一点的木色底 + 黑色字
-        love.graphics.setColor(0.92, 0.85, 0.7, 1)
+        love.graphics.setColor(0.92, 0.85, 0.7, alpha)
     end
     love.graphics.circle("fill", sx, sy, radius)
 
     -- 棋子边缘（深色描边，立体感）
-    love.graphics.setColor(0.5, 0.35, 0.2, 1)
+    love.graphics.setColor(0.5, 0.35, 0.2, alpha)
     love.graphics.setLineWidth(2)
     love.graphics.circle("line", sx, sy, radius)
     love.graphics.setLineWidth(1)
 
     -- 内圈装饰线
-    love.graphics.setColor(0.7, 0.5, 0.3, 0.5)
+    love.graphics.setColor(0.7, 0.5, 0.3, 0.5 * alpha)
     love.graphics.circle("line", sx, sy, radius * 0.88)
 
     -- ========== 棋子文字 ==========
     local text = self:get_char()
     local font_size = math.floor(radius * 1.3)
+    if font_size < 8 then font_size = 8 end
     local font = ResourceManager.get_font("NotoSansSC-Regular.ttc", font_size)
     love.graphics.setFont(font)
 
     -- 文字颜色
     if self.side == "red" then
-        love.graphics.setColor(0.85, 0.15, 0.1, 1)  -- 深红色
+        love.graphics.setColor(0.85, 0.15, 0.1, alpha)
     else
-        love.graphics.setColor(0.1, 0.1, 0.15, 1)   -- 近黑色
+        love.graphics.setColor(0.1, 0.1, 0.15, alpha)
     end
 
     -- 文字居中
@@ -213,14 +309,14 @@ function Piece:draw(board)
     love.graphics.print(text, sx - tw / 2, sy - th / 2)
 
     -- ========== 选中高亮 ==========
-    if self.selected then
+    if self.selected and not self.capturing then
         -- 外圈金色光环
         love.graphics.setColor(1, 0.9, 0.2, 0.8)
         love.graphics.setLineWidth(3)
         love.graphics.circle("line", sx, sy, radius + 3)
         love.graphics.setLineWidth(1)
 
-        -- 轻微放大效果（通过再画一圈半透明的）
+        -- 轻微放大效果
         love.graphics.setColor(1, 1, 0.5, 0.2)
         love.graphics.circle("fill", sx, sy, radius + 2)
     end
@@ -231,12 +327,32 @@ function Piece:draw(board)
 end
 
 -- ============================================================
--- 每帧更新（目前用于动画，V2 可能用不上）
+-- 每帧更新
 -- ============================================================
 
 function Piece:update(dt)
-    -- V2 暂无动画逻辑
-    -- V3 可以加移动动画、吃子动画等
+    -- 移动动画
+    if self.animating then
+        self.anim_progress = self.anim_progress + dt / self.anim_duration
+
+        if self.anim_progress >= 1 then
+            -- 动画结束
+            self.anim_progress = 1
+            self.animating = false
+            self.render_offset_x = 0
+            self.render_offset_y = 0
+        end
+    end
+
+    -- 被吃动画
+    if self.capturing then
+        self.capture_progress = self.capture_progress + dt / self.capture_duration
+        if self.capture_progress >= 1 then
+            self.capture_progress = 1
+            self.capturing = false
+            self.alive = false  -- 动画结束后真正消失
+        end
+    end
 end
 
 return Piece
