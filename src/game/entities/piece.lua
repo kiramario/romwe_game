@@ -262,50 +262,92 @@ function Piece:draw(board)
     -- 阴影稍微往下偏一点，移动时阴影偏得更多（模拟高度）
     local shadow_offset_y = 3
     local shadow_offset_x = 2
+    local shadow_scale = 1.0
+
     if self.animating or self.capturing then
         -- 动画中阴影加大，模拟棋子"飞起来"
-        shadow_offset_y = 5 + (1 - math.abs(self.anim_progress - 0.5) * 2) * 4
+        local lift = (1 - math.abs(self.anim_progress - 0.5) * 2)
+        shadow_offset_y = 5 + lift * 6
+        shadow_offset_x = 2 + lift * 2
+        shadow_scale = 1.0 + lift * 0.15
     end
 
-    love.graphics.setColor(0, 0, 0, 0.25 * alpha)
-    love.graphics.circle("fill", sx + shadow_offset_x, sy + shadow_offset_y, radius)
+    -- 多层阴影（更柔和）
+    for i = 3, 1, -1 do
+        local shadow_alpha = 0.08 * i
+        local shadow_r = radius * (shadow_scale + i * 0.03)
+        love.graphics.setColor(0, 0, 0, shadow_alpha * alpha)
+        love.graphics.circle("fill",
+            sx + shadow_offset_x + i * 0.5,
+            sy + shadow_offset_y + i * 0.5,
+            shadow_r)
+    end
 
-    -- ========== 棋子主体 ==========
-    -- 棋子底色（木质感觉）
+    -- ========== 棋子主体（立体效果：多层圆环模拟斜角） ==========
+    -- 最底层：深色边缘（侧面阴影）
+    love.graphics.setColor(0.4, 0.28, 0.15, alpha)
+    love.graphics.circle("fill", sx, sy + 2, radius)
+
+    -- 中层：侧面颜色
+    love.graphics.setColor(0.55, 0.4, 0.25, alpha)
+    love.graphics.circle("fill", sx, sy + 1, radius - 1)
+
+    -- 顶层：棋子表面（木质原色）
+    local surface_r = radius - 3
     if self.side == "red" then
-        love.graphics.setColor(0.95, 0.9, 0.75, alpha)
+        love.graphics.setColor(0.96, 0.91, 0.78, alpha)
     else
-        love.graphics.setColor(0.92, 0.85, 0.7, alpha)
+        love.graphics.setColor(0.93, 0.87, 0.73, alpha)
     end
-    love.graphics.circle("fill", sx, sy, radius)
+    love.graphics.circle("fill", sx, sy - 1, surface_r)
 
-    -- 棋子边缘（深色描边，立体感）
-    love.graphics.setColor(0.5, 0.35, 0.2, alpha)
-    love.graphics.setLineWidth(2)
-    love.graphics.circle("line", sx, sy, radius)
-    love.graphics.setLineWidth(1)
+    -- 木纹纹理
+    love.graphics.setColor(0.75, 0.58, 0.38, 0.1 * alpha)
+    for i = -3, 3 do
+        local line_y = sy + i * 4
+        love.graphics.line(sx - surface_r + 2, line_y, sx + surface_r - 2, line_y + math.sin(i) * 2)
+    end
 
     -- 内圈装饰线
-    love.graphics.setColor(0.7, 0.5, 0.3, 0.5 * alpha)
-    love.graphics.circle("line", sx, sy, radius * 0.88)
+    love.graphics.setColor(0.6, 0.42, 0.25, 0.6 * alpha)
+    love.graphics.setLineWidth(1.5)
+    love.graphics.circle("line", sx, sy - 1, radius * 0.88)
+    love.graphics.setLineWidth(1)
+
+    -- 顶部高光（模拟光源从左上照来）
+    love.graphics.setColor(1, 1, 1, 0.15 * alpha)
+    love.graphics.circle("fill", sx - radius * 0.3, sy - radius * 0.35, radius * 0.25)
+
+    -- 更亮的小高光点
+    love.graphics.setColor(1, 1, 1, 0.3 * alpha)
+    love.graphics.circle("fill", sx - radius * 0.4, sy - radius * 0.5, radius * 0.1)
 
     -- ========== 棋子文字 ==========
     local text = self:get_char()
-    local font_size = math.floor(radius * 1.3)
+    local font_size = math.floor(radius * 1.35)
     if font_size < 8 then font_size = 8 end
-    local font = ResourceManager.get_font("NotoSansSC-Regular.ttc", font_size)
+    local font = ResourceManager.get_font("NotoSansSC-Bold.ttc", font_size)
+    if not font then
+        font = ResourceManager.get_font("NotoSansSC-Regular.ttc", font_size)
+    end
     love.graphics.setFont(font)
 
-    -- 文字颜色
+    -- 文字颜色（带阴影/描边更清晰）
+    local text_color
     if self.side == "red" then
-        love.graphics.setColor(0.85, 0.15, 0.1, alpha)
+        text_color = {0.82, 0.12, 0.08, alpha}
     else
-        love.graphics.setColor(0.1, 0.1, 0.15, alpha)
+        text_color = {0.08, 0.08, 0.12, alpha}
     end
 
-    -- 文字居中
+    -- 文字阴影
+    love.graphics.setColor(0, 0, 0, 0.15 * alpha)
     local tw = font:getWidth(text)
     local th = font:getHeight()
+    love.graphics.print(text, sx - tw / 2 + 1, sy - th / 2 + 1)
+
+    -- 文字主体
+    love.graphics.setColor(text_color)
     love.graphics.print(text, sx - tw / 2, sy - th / 2)
 
     -- ========== 选中高亮 ==========

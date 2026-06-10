@@ -77,6 +77,12 @@ function Board.new(options)
     -- 可走位置列表（V2 才用，V1 留空）
     self.move_hints = {}
 
+    -- 是否显示坐标（V5 新增）
+    self.show_coordinates = options.show_coordinates
+    if self.show_coordinates == nil then
+        self.show_coordinates = true
+    end
+
     Logger.debugf("Board: created (%.0f x %.0f, cell=%d)",
         self.width, self.height, self.cell_size)
 
@@ -233,6 +239,9 @@ function Board:draw()
     -- 5. 绘制位置标记（炮位、兵位的小十字）
     self:draw_position_marks()
 
+    -- 5.5 绘制坐标标注
+    self:draw_coordinates()
+
     -- 6. 绘制选中高亮
     if self.selected_x and self.selected_y then
         self:draw_highlight(self.selected_x, self.selected_y, self.colors.highlight)
@@ -246,17 +255,58 @@ end
 
 -- 绘制背景
 function Board:draw_background()
-    -- 木色背景板
-    love.graphics.setColor(self.colors.background)
+    -- 棋盘整体阴影（营造悬浮感）
+    love.graphics.setColor(0, 0, 0, 0.3)
+    for i = 4, 1, -1 do
+        local alpha = 0.08 * i
+        love.graphics.setColor(0, 0, 0, alpha)
+        love.graphics.rectangle("fill",
+            self.x + i, self.y + i * 2,
+            self.width, self.height, 12, 12)
+    end
 
-    -- 圆角矩形（模拟木质棋盘）
-    local corner = 10
-    love.graphics.rectangle("fill", self.x, self.y, self.width, self.height, corner, corner)
+    -- 外框（深色木质边框）
+    local border_w = 20  -- 边框宽度
+    love.graphics.setColor(0.35, 0.22, 0.12, 1)  -- 深棕色
+    love.graphics.rectangle("fill",
+        self.x - border_w, self.y - border_w,
+        self.width + border_w * 2, self.height + border_w * 2,
+        14, 14)
 
-    -- 边框
-    love.graphics.setColor(self.colors.line)
+    -- 内框高光（边框顶部高光，模拟 3D 凸起）
+    love.graphics.setColor(0.55, 0.38, 0.22, 0.6)
     love.graphics.setLineWidth(2)
-    love.graphics.rectangle("line", self.x, self.y, self.width, self.height, corner, corner)
+    love.graphics.rectangle("line",
+        self.x - border_w + 2, self.y - border_w + 2,
+        self.width + border_w * 2 - 4, self.height + border_w * 2 - 4,
+        12, 12)
+    love.graphics.setLineWidth(1)
+
+    -- 木纹底色（浅黄色木面）
+    love.graphics.setColor(self.colors.background)
+    love.graphics.rectangle("fill", self.x, self.y, self.width, self.height, 8, 8)
+
+    -- 木纹纹理（用正弦曲线模拟木纹）
+    -- 简单但有效的木纹效果：多条不规则的深色横线
+    love.graphics.setColor(0.85, 0.68, 0.45, 0.08)
+    for i = 0, math.floor(self.height / 8) do
+        local y = self.y + i * 8 + math.sin(i * 0.5) * 3
+        love.graphics.line(self.x, y, self.x + self.width, y + math.sin(i * 0.3) * 2)
+    end
+
+    -- 更粗的年轮纹理
+    love.graphics.setColor(0.75, 0.55, 0.35, 0.06)
+    love.graphics.setLineWidth(2)
+    for i = 0, math.floor(self.height / 30) do
+        local y = self.y + i * 30 + math.sin(i * 0.7) * 8
+        love.graphics.line(self.x, y, self.x + self.width, y + math.sin(i * 0.4) * 5)
+    end
+    love.graphics.setLineWidth(1)
+
+    -- 棋盘内边界线
+    love.graphics.setColor(self.colors.line)
+    love.graphics.setLineWidth(1.5)
+    love.graphics.rectangle("line", self.x, self.y, self.width, self.height, 8, 8)
     love.graphics.setLineWidth(1)
 end
 
@@ -450,6 +500,51 @@ function Board:draw_move_hint(bx, by)
 
     love.graphics.setColor(self.colors.move_hint)
     love.graphics.circle("fill", sx, sy, radius)
+    love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- ============================================================
+-- 绘制坐标标注
+-- 说明: 棋盘四周显示坐标，方便记录棋谱
+--   上方/下方: 汉字数字（九八七六五四三二一）
+--   左侧/右侧: 阿拉伯数字 1-10
+-- ============================================================
+
+function Board:draw_coordinates()
+    if not self.show_coordinates then
+        return
+    end
+
+    local font = love.graphics.newFont(12)
+    love.graphics.setFont(font)
+    love.graphics.setColor(0.5, 0.35, 0.2, 0.7)
+
+    -- 列坐标：汉字数字，从上往下看是 九八七六五四三二一（红方视角）
+    -- 但中国象棋传统上，黑方从右往左数 1-9，红方从右往左数 1-9
+    -- 我们简单点：上方标数字 1-9
+    for bx = 1, Board.COLS do
+        local sx, sy = self:board_to_screen(bx, 1)
+        local text = tostring(bx)
+        local tw = font:getWidth(text)
+        love.graphics.print(text, sx - tw / 2, sy - 18)
+
+        -- 下方也标
+        local sx2, sy2 = self:board_to_screen(bx, Board.ROWS)
+        love.graphics.print(text, sx2 - tw / 2, sy2 + 6)
+    end
+
+    -- 行坐标：1-10
+    for by = 1, Board.ROWS do
+        local sx, sy = self:board_to_screen(1, by)
+        local text = tostring(by)
+        local tw = font:getWidth(text)
+        love.graphics.print(text, sx - 20 - tw / 2, sy - 7)
+
+        -- 右侧也标
+        local sx2, sy2 = self:board_to_screen(Board.COLS, by)
+        love.graphics.print(text, sx2 + 16, sy2 - 7)
+    end
+
     love.graphics.setColor(1, 1, 1, 1)
 end
 

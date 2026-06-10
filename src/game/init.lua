@@ -7,7 +7,7 @@ local Core = require("src.core")
 local Game = {}
 
 -- 游戏版本号
-Game.version = "4.0.0"
+Game.version = "5.0.0"
 Game.name = "Chinese Chess"
 
 -- 初始化游戏
