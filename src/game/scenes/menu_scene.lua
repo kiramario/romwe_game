@@ -1,7 +1,6 @@
 -- 场景名: menu_scene
--- 功能: 主菜单场景
--- 说明: 游戏启动后显示的主菜单，包含开始游戏、设置、关于等选项
--- 类比: 游戏的主菜单界面
+-- 功能: 中国象棋菜单场景
+-- 说明: 象棋游戏的子菜单，包含开始、设置、关于
 
 local Core = require("src.core")
 local Logger = Core.Logger
@@ -9,29 +8,21 @@ local RenderLayer = Core.RenderLayer
 local Input = Core.Input
 local SceneManager = Core.SceneManager
 local ResourceManager = Core.ResourceManager
-local EventBus = Core.EventBus
 local Utils = Core.Utils
 
+local Game = require("src.game")
 local Button = require("src.game.ui.button")
 
 local MenuScene = {}
 MenuScene.__index = MenuScene
 
--- ============================================================
--- 构造函数
--- ============================================================
-
 function MenuScene.new()
     local self = setmetatable({}, MenuScene)
-
-    -- 按钮列表
     self.buttons = {}
-
-    -- 消息提示（临时显示）
     self.message = nil
     self.message_timer = 0
 
-    -- 背景星星（装饰）
+    -- 背景星星
     self.stars = {}
     for i = 1, 50 do
         table.insert(self.stars, {
@@ -42,22 +33,16 @@ function MenuScene.new()
             alpha = math.random(30, 80) / 100,
         })
     end
-
     return self
 end
-
--- ============================================================
--- 场景进入
--- ============================================================
 
 function MenuScene:enter(params)
     Logger.debug("MenuScene: enter")
 
     local w, h = love.graphics.getDimensions()
 
-    -- ========== 背景层 ==========
+    -- 背景层
     RenderLayer.add("BACKGROUND", function()
-        -- 深色渐变背景
         for i = 0, h, 4 do
             local t = i / h
             local r = 0.03 + t * 0.05
@@ -66,8 +51,6 @@ function MenuScene:enter(params)
             love.graphics.setColor(r, g, b, 1)
             love.graphics.rectangle("fill", 0, i, w, 4)
         end
-
-        -- 装饰性星星
         love.graphics.setColor(1, 1, 1, 0.6)
         for _, star in ipairs(self.stars) do
             love.graphics.circle("fill", star.x, star.y, star.size)
@@ -75,196 +58,121 @@ function MenuScene:enter(params)
         love.graphics.setColor(1, 1, 1, 1)
     end)
 
-    -- ========== 游戏层：标题 ==========
+    -- 标题层
     RenderLayer.add("GAME", function()
         local w, h = love.graphics.getDimensions()
-
-        -- 游戏标题
-        local title_font = ResourceManager.get_font("NotoSansSC-Regular.ttc", 64)
+        local title_font = ResourceManager.get_font("NotoSansSC-Bold.ttc", 56)
         love.graphics.setFont(title_font)
-        love.graphics.setColor(1, 0.85, 0.6, 1)  -- 金色
-
+        love.graphics.setColor(1, 0.85, 0.6, 1)
         local title = "中国象棋"
-        local title_w = title_font:getWidth(title)
-        love.graphics.print(title, (w - title_w) / 2, h * 0.18)
+        local tw = title_font:getWidth(title)
+        love.graphics.print(title, (w - tw) / 2, h * 0.18)
 
-        -- 副标题
         local subtitle_font = ResourceManager.get_font("NotoSansSC-Regular.ttc", 20)
         love.graphics.setFont(subtitle_font)
         love.graphics.setColor(0.7, 0.7, 0.8, 1)
-
-        local subtitle = "Chinese Chess"
-        local subtitle_w = subtitle_font:getWidth(subtitle)
-        love.graphics.print(subtitle, (w - subtitle_w) / 2, h * 0.18 + 80)
-
-        love.graphics.setFont(love.graphics.newFont(12))
+        local subtitle = "romwe_game v" .. Game.version
+        local sw = subtitle_font:getWidth(subtitle)
+        love.graphics.print(subtitle, (w - sw) / 2, h * 0.18 + 72)
         love.graphics.setColor(1, 1, 1, 1)
     end)
 
-    -- ========== UI 层：按钮 ==========
-    -- 注意：按钮是在 update 里更新状态，draw 里绘制
-    -- 我们用 RenderLayer 的 UI 层来画按钮
-
+    -- UI 层
     RenderLayer.add("UI", function()
         self:draw_buttons()
         self:draw_message()
     end)
 
-    -- ========== 调试层 ==========
-    RenderLayer.add("DEBUG", function()
-        love.graphics.setColor(0, 1, 0, 1)
-        love.graphics.print("Scene: menu_scene", 10, 10)
-        love.graphics.print("Buttons: " .. tostring(#self.buttons), 10, 30)
-        love.graphics.print("按 ENTER 开始游戏 | ESC 退出", 10, 50)
-        love.graphics.setColor(1, 1, 1, 1)
-    end)
-
-    -- ========== 创建按钮 ==========
+    -- 按钮
     self:create_buttons()
-
     Logger.info("MenuScene: ready")
 end
 
--- ============================================================
--- 创建按钮
--- ============================================================
-
 function MenuScene:create_buttons()
     local w, h = love.graphics.getDimensions()
-
-    -- 按钮配置
-    local button_width = 280
-    local button_height = 56
-    local button_spacing = 20
+    local bw, bh = 280, 56
+    local spacing = 20
     local start_y = h * 0.45
-    local center_x = w / 2 - button_width / 2
+    local cx = w / 2 - bw / 2
 
-    -- 1. 开始游戏按钮
     local btn_start = Button.new({
-        x = center_x,
-        y = start_y,
-        width = button_width,
-        height = button_height,
-        text = "开始游戏",
-        font_size = 22,
-        font_path = "NotoSansSC-Regular.ttc",
+        x = cx, y = start_y, width = bw, height = bh,
+        text = "选择游戏", font_size = 22, font_path = "NotoSansSC-Regular.ttc",
         corner_radius = 8,
         on_click = function()
-            Logger.debug("MenuScene: 开始游戏 按钮被点击")
-            SceneManager.switch("game")
+            SceneManager.switch("select_game")
         end,
     })
     table.insert(self.buttons, btn_start)
 
-    -- 2. 设置按钮
     local btn_settings = Button.new({
-        x = center_x,
-        y = start_y + button_height + button_spacing,
-        width = button_width,
-        height = button_height,
-        text = "设置",
-        font_size = 22,
-        font_path = "NotoSansSC-Regular.ttc",
+        x = cx, y = start_y + bh + spacing, width = bw, height = bh,
+        text = "设置", font_size = 22, font_path = "NotoSansSC-Regular.ttc",
         corner_radius = 8,
         on_click = function()
-            self:show_message("设置功能开发中... (V3 实现)")
+            SceneManager.push("settings")
         end,
     })
     table.insert(self.buttons, btn_settings)
 
-    -- 3. 关于按钮
-    local btn_about = Button.new({
-        x = center_x,
-        y = start_y + (button_height + button_spacing) * 2,
-        width = button_width,
-        height = button_height,
-        text = "关于",
-        font_size = 22,
-        font_path = "NotoSansSC-Regular.ttc",
+    local btn_back = Button.new({
+        x = cx, y = start_y + (bh + spacing) * 2, width = bw, height = bh,
+        text = "返回游戏选择", font_size = 22, font_path = "NotoSansSC-Regular.ttc",
         corner_radius = 8,
         on_click = function()
-            self:show_message("中国象棋 v1.0.0\nTrillion Games 出品")
+            SceneManager.switch("select_game")
+        end,
+    })
+    table.insert(self.buttons, btn_back)
+
+    local btn_about = Button.new({
+        x = cx, y = start_y + (bh + spacing) * 3, width = bw, height = bh,
+        text = "关于", font_size = 22, font_path = "NotoSansSC-Regular.ttc",
+        corner_radius = 8,
+        on_click = function()
+            self:show_message("romwe_game v" .. Game.version .. "\n\n基于 LÖVE2D 引擎的开源游戏合集\n中国象棋 + 弹珠游戏")
         end,
     })
     table.insert(self.buttons, btn_about)
 end
 
--- ============================================================
--- 显示提示消息
--- ============================================================
-
 function MenuScene:show_message(text, duration)
     self.message = text
-    self.message_timer = duration or 2.0  -- 默认显示 2 秒
+    self.message_timer = duration or 3.0
 end
-
--- ============================================================
--- 绘制按钮
--- ============================================================
 
 function MenuScene:draw_buttons()
-    for _, btn in ipairs(self.buttons) do
-        btn:draw()
-    end
+    for _, btn in ipairs(self.buttons) do btn:draw() end
 end
 
--- ============================================================
--- 绘制消息
--- ============================================================
-
 function MenuScene:draw_message()
-    if not self.message or self.message_timer <= 0 then
-        return
-    end
-
+    if not self.message or self.message_timer <= 0 then return end
     local w, h = love.graphics.getDimensions()
-
-    -- 半透明背景
     love.graphics.setColor(0, 0, 0, 0.7)
     local msg_font = ResourceManager.get_font("NotoSansSC-Regular.ttc", 18)
     love.graphics.setFont(msg_font)
-
-    -- 计算消息框大小（支持多行）
     local lines = Utils.string_split(self.message, "\n")
     local max_w = 0
     for _, line in ipairs(lines) do
-        local lw = msg_font:getWidth(line)
-        if lw > max_w then max_w = lw end
+        max_w = math.max(max_w, msg_font:getWidth(line))
     end
-
     local box_w = max_w + 40
     local box_h = #lines * 28 + 20
     local box_x = (w - box_w) / 2
     local box_y = h * 0.7
-
     love.graphics.rectangle("fill", box_x, box_y, box_w, box_h, 8, 8)
-
-    -- 消息文字
     love.graphics.setColor(1, 1, 1, 1)
     for i, line in ipairs(lines) do
-        local line_w = msg_font:getWidth(line)
-        love.graphics.print(line, (w - line_w) / 2, box_y + 10 + (i - 1) * 28)
+        local lw = msg_font:getWidth(line)
+        love.graphics.print(line, (w - lw) / 2, box_y + 10 + (i - 1) * 28)
     end
-
-    love.graphics.setFont(love.graphics.newFont(12))
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
--- ============================================================
--- 每帧更新
--- ============================================================
-
 function MenuScene:update(dt)
-    -- 更新按钮
-    for _, btn in ipairs(self.buttons) do
-        btn:update(dt)
-    end
+    for _, btn in ipairs(self.buttons) do btn:update(dt) end
+    if self.message_timer > 0 then self.message_timer = self.message_timer - dt end
 
-    -- 更新消息计时器
-    if self.message_timer > 0 then
-        self.message_timer = self.message_timer - dt
-    end
-
-    -- 更新星星（缓慢下移，营造纵深感）
     local h = love.graphics.getHeight()
     for _, star in ipairs(self.stars) do
         star.y = star.y + star.speed * dt
@@ -274,32 +182,21 @@ function MenuScene:update(dt)
         end
     end
 
-    -- 键盘快捷键
+    if Input.is_pressed("cancel") then
+        SceneManager.switch("select_game")
+    end
     if Input.is_pressed("confirm") then
-        -- 回车 = 开始游戏
         SceneManager.switch("game")
     end
 end
-
--- ============================================================
--- 每帧绘制
--- ============================================================
 
 function MenuScene:draw()
     RenderLayer.draw()
 end
 
--- ============================================================
--- 场景退出
--- ============================================================
-
 function MenuScene:exit()
     Logger.debug("MenuScene: exit")
-
-    -- 清空按钮
     self.buttons = {}
-
-    -- 清空绘制层
     RenderLayer.clear_all()
 end
 

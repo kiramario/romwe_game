@@ -1,4 +1,4 @@
-# Trillion Games 2D Engine (中国象棋)
+# Romwe Games 2D Engine 
 
 一个基于 LÖVE2D 的 2D 游戏项目。首发产品为中国象棋，引擎层可复用于其他 2D 游戏。
 
@@ -7,7 +7,7 @@
 ### 运行游戏
 
 ```bash
-cd /home/love2DGame_brich
+cd /home/romwe_game
 love .
 ```
 
