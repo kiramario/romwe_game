@@ -81,7 +81,7 @@ function BootScene:update(dt)
     -- 检测空格键，跳转到测试场景
     if Core.Input.is_pressed("space") then
         Logger.debug("BootScene: space pressed, switching to test scene")
-        Core.SceneManager.switch("test")
+        Core.SceneManager.switch("select_game")
     end
 end
 
