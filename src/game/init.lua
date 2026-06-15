@@ -7,7 +7,7 @@ local Core = require("src.core")
 local Game = {}
 
 -- 游戏版本号
-Game.version = "4.0.0"
+Game.version = "1.0.0"
 Game.name = "Chinese Chess"
 
 -- 初始化游戏
@@ -16,26 +16,22 @@ function Game.init()
     Core.Logger.debug("Game: initializing...")
 
     -- 注册所有场景
+    -- V1 版本场景
     local BootScene = require("src.game.scenes.boot_scene")
     local MenuScene = require("src.game.scenes.menu_scene")
     local GameScene = require("src.game.scenes.game_scene")
-    local SettingsScene = require("src.game.scenes.settings_scene")
     local TestScene = require("src.game.scenes.test_scene")  -- 保留测试场景用于调试
 
     Core.SceneManager.register("boot", BootScene)
     Core.SceneManager.register("menu", MenuScene)
     Core.SceneManager.register("game", GameScene)
-    Core.SceneManager.register("settings", SettingsScene)
     Core.SceneManager.register("test", TestScene)
-
-    -- 初始化音频（V4 新增）
-    Core.AudioManager.init()
 
     -- 设置场景过渡时长
     Core.SceneManager.set_transition_duration(0.35)
 
     -- 启动 boot 场景
-    Core.SceneManager.switch("game")  -- 测试
+    Core.SceneManager.switch("boot")
 
     Core.Logger.info("Game: initialized (version " .. Game.version .. ")")
 end

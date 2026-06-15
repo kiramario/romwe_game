@@ -1,7 +1,7 @@
 -- 场景名: game_scene
 -- 功能: 对局场景
 -- 说明: 显示棋盘和棋子的游戏主场景
--- V4 版本：AI 对手 + 音效 + 存档
+-- V2 版本：完整棋子 + 走法规则 + 吃子 + 将军判定
 
 local Core = require("src.core")
 local Logger = Core.Logger
@@ -11,14 +11,10 @@ local SceneManager = Core.SceneManager
 local ResourceManager = Core.ResourceManager
 local EventBus = Core.EventBus
 local Utils = Core.Utils
-local AudioManager = Core.AudioManager
-local Config = Core.Config
 
 local Board = require("src.game.entities.board")
 local GameState = require("src.game.systems.game_state")
 local Rules = require("src.game.systems.rules")
-local AI = require("src.game.systems.ai")
-local SaveLoad = require("src.game.systems.save_load")
 local Dialog = require("src.game.ui.dialog")
 
 local GameScene = {}
@@ -58,16 +54,6 @@ function GameScene.new()
     self.pause_dialog = nil
     self.game_over_dialog = nil
 
-    -- AI 相关
-    self.ai_enabled = true
-    self.ai_difficulty = "normal"
-    self.ai_thinking = false   -- AI 是否正在思考
-    self.ai_side = "black"     -- AI 执黑（默认）
-    self.ai_thinking_timer = 0 -- AI 思考计时器（给一点延迟感）
-
-    -- 存档槽位
-    self.save_slot = 1
-
     return self
 end
 
@@ -93,18 +79,6 @@ function GameScene:enter(params)
     -- ========== 初始化游戏状态 ==========
     self.game_state = GameState.new()
     self.game_state:init_default_board()
-
-    -- 从配置读取 AI 设置
-    local ai_enabled = Config.get("game.ai_enabled")
-    if ai_enabled ~= nil then self.ai_enabled = ai_enabled end
-
-    local diff = Config.get("game.difficulty")
-    if diff then self.ai_difficulty = diff end
-
-    -- AI 走黑方，所以如果当前回合是黑方且 AI 开启，启动 AI 思考
-    if self.ai_enabled and self.game_state.current_turn == self.ai_side then
-        self:start_ai_thinking()
-    end
 
     -- 注册事件监听
     self:_register_events()
@@ -222,23 +196,22 @@ function GameScene:_register_events()
         }
 
         -- 开始移动动画
+        -- 注意：棋子的逻辑位置已经更新了（data.piece.x == data.to_x）
+        -- 动画从旧位置插值到新位置，是纯视觉效果
         data.piece:start_move_animation(data.to_x, data.to_y, 0.25)
+        -- 设置动画起点（因为逻辑位置已经变了，手动设起点）
         data.piece.anim_from_x = data.from_x
         data.piece.anim_from_y = data.from_y
 
         self.is_animating = true
-
-        -- 音效
-        if data.captured then
-            AudioManager.play_sfx("capture")
-        else
-            AudioManager.play_sfx("move")
-        end
     end)
 
     -- 吃子事件
     EventBus.on("game:capture", function(piece)
         Logger.debugf("GameScene: capture event - %s %s", piece.side, piece.type)
+        -- 被吃的棋子：先标记为存活（用于播放动画），动画结束后真正消失
+        -- 注意：game_state 里已经把 alive 设为 false 了
+        -- 我们需要让它"复活"一小段时间来播放动画
         piece.alive = true  -- 临时复活，用于播放动画
         piece:start_capture_animation(0.3)
         self:show_message("吃子！", false, 0.8)
@@ -248,7 +221,6 @@ function GameScene:_register_events()
     EventBus.on("game:check", function(data)
         local side_name = data.side == "red" and "红方" or "黑方"
         self:show_message(side_name .. "被将军！", false, 1.5)
-        AudioManager.play_sfx("check")
     end)
 
     -- 将死事件
@@ -256,7 +228,6 @@ function GameScene:_register_events()
         local winner = data.loser == "red" and "黑方" or "红方"
         local reason = data.reason or "将死"
         self:show_game_over_dialog(winner, reason)
-        AudioManager.play_sfx("game_over")
     end)
 end
 
@@ -417,28 +388,6 @@ function GameScene:draw_ui()
     local turn_w = turn_font:getWidth(turn_text)
     love.graphics.print(turn_text, (w - turn_w) / 2, 20)
 
-    -- AI 思考中提示
-    if self.ai_thinking then
-        local thinking_font = ResourceManager.get_font("NotoSansSC-Regular.ttc", 16)
-        love.graphics.setFont(thinking_font)
-        love.graphics.setColor(0.7, 0.7, 0.9, 1)
-
-        -- 动态的省略号
-        local dots = ""
-        local t = love.timer.getTime() * 2
-        for i = 1, 3 do
-            if t % 3 > i - 1 then
-                dots = dots .. "."
-            else
-                dots = dots .. " "
-            end
-        end
-
-        local thinking_text = "AI 思考中" .. dots
-        local tw = thinking_font:getWidth(thinking_text)
-        love.graphics.print(thinking_text, (w - tw) / 2, 55)
-    end
-
     -- 底部：操作提示
     local hint_font = ResourceManager.get_font("NotoSansSC-Regular.ttc", 13)
     love.graphics.setFont(hint_font)
@@ -517,21 +466,6 @@ function GameScene:update(dt)
     if self.is_animating then
         if self:_all_animations_done() then
             self.is_animating = false
-
-            -- 动画结束后，如果轮到 AI 走棋，启动 AI 思考
-            if self.ai_enabled and
-               self.game_state.current_turn == self.ai_side and
-               not self.game_state:is_game_over() then
-                self:start_ai_thinking()
-            end
-        end
-    end
-
-    -- 更新 AI 思考
-    if self.ai_thinking then
-        self.ai_thinking_timer = self.ai_thinking_timer - dt
-        if self.ai_thinking_timer <= 0 then
-            self:ai_make_move()
         end
     end
 
@@ -807,62 +741,6 @@ function GameScene:show_game_over_dialog(winner, reason)
     })
 
     Logger.infof("GameScene: game over - %s wins (%s)", winner, reason)
-end
-
--- ============================================================
--- AI 对手
--- ============================================================
-
--- 启动 AI 思考（加一点延迟，显得"在思考"）
-function GameScene:start_ai_thinking()
-    if self.game_state:is_game_over() then return end
-
-    self.ai_thinking = true
-    -- 思考时间：简单难度快一点，困难难度慢一点
-    local think_time = 0.5
-    if self.ai_difficulty == "hard" then think_time = 0.8 end
-    if self.ai_difficulty == "expert" then think_time = 1.2 end
-
-    self.ai_thinking_timer = think_time
-    Logger.debugf("GameScene: AI starts thinking (%s, %.1fs)",
-        self.ai_difficulty, think_time)
-end
-
--- AI 执行走棋
-function GameScene:ai_make_move()
-    if not self.ai_thinking then return end
-    if self.game_state:is_game_over() then
-        self.ai_thinking = false
-        return
-    end
-
-    -- 找最佳走法
-    local best_move, score = AI.find_best_move(
-        self.game_state.pieces,
-        self.ai_side,
-        self.ai_difficulty
-    )
-
-    if best_move then
-        -- 找到棋盘上对应的棋子（因为 AI 操作的是引用，和游戏状态的棋子是同一个 table）
-        -- 但为了安全，重新获取一次
-        local piece = self.game_state:get_piece_at(best_move.from_x, best_move.from_y)
-
-        if piece then
-            local success, reason = self.game_state:move(piece, best_move.to_x, best_move.to_y)
-            if not success then
-                Logger.warnf("GameScene: AI move failed: %s", reason or "unknown")
-            end
-        else
-            Logger.warnf("GameScene: AI piece not found at (%d,%d)",
-                best_move.from_x, best_move.from_y)
-        end
-    else
-        -- AI 找不到走法 = 将死或困毙
-        Logger.debug("GameScene: AI has no moves (checkmate or stalemate)")
-    end
-
-    self.ai_thinking = false
 end
 
 -- ============================================================

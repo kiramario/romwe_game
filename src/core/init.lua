@@ -28,9 +28,6 @@ Core.ResourceManager = require("src.core.resource_manager")
 -- 渲染系统
 Core.RenderLayer = require("src.core.render_layer")
 
--- 音频系统
-Core.AudioManager = require("src.core.audio_manager")
-
 -- 场景管理（依赖上面的很多模块）
 Core.SceneManager = require("src.core.scene_manager")
 
