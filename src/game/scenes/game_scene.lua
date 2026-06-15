@@ -15,6 +15,7 @@ local Utils = Core.Utils
 local Board = require("src.game.entities.board")
 local GameState = require("src.game.systems.game_state")
 local Rules = require("src.game.systems.rules")
+local Dialog = require("src.game.ui.dialog")
 
 local GameScene = {}
 GameScene.__index = GameScene
@@ -45,6 +46,13 @@ function GameScene.new()
 
     -- 最后一步走棋的位置（高亮显示）
     self.last_move = nil
+
+    -- 动画状态
+    self.is_animating = false  -- 是否有动画在播放（动画期间锁定输入）
+
+    -- UI 弹窗
+    self.pause_dialog = nil
+    self.game_over_dialog = nil
 
     return self
 end
@@ -143,7 +151,7 @@ function GameScene:enter(params)
         local bx, by = self.board:screen_to_board(mx, my)
 
         love.graphics.setColor(0, 1, 0, 1)
-        love.graphics.print("Scene: game_scene (V2)", 10, 10)
+        love.graphics.print("Scene: game_scene (V3)", 10, 10)
         love.graphics.print("Turn: " .. self.game_state.current_turn, 10, 30)
         love.graphics.print("Status: " .. self.game_state.status, 10, 50)
 
@@ -186,11 +194,26 @@ function GameScene:_register_events()
             to_x = data.to_x,
             to_y = data.to_y,
         }
+
+        -- 开始移动动画
+        -- 注意：棋子的逻辑位置已经更新了（data.piece.x == data.to_x）
+        -- 动画从旧位置插值到新位置，是纯视觉效果
+        data.piece:start_move_animation(data.to_x, data.to_y, 0.25)
+        -- 设置动画起点（因为逻辑位置已经变了，手动设起点）
+        data.piece.anim_from_x = data.from_x
+        data.piece.anim_from_y = data.from_y
+
+        self.is_animating = true
     end)
 
     -- 吃子事件
     EventBus.on("game:capture", function(piece)
         Logger.debugf("GameScene: capture event - %s %s", piece.side, piece.type)
+        -- 被吃的棋子：先标记为存活（用于播放动画），动画结束后真正消失
+        -- 注意：game_state 里已经把 alive 设为 false 了
+        -- 我们需要让它"复活"一小段时间来播放动画
+        piece.alive = true  -- 临时复活，用于播放动画
+        piece:start_capture_animation(0.3)
         self:show_message("吃子！", false, 0.8)
     end)
 
@@ -203,7 +226,8 @@ function GameScene:_register_events()
     -- 将死事件
     EventBus.on("game:checkmate", function(data)
         local winner = data.loser == "red" and "黑方" or "红方"
-        self:show_message(winner .. "获胜！（" .. (data.reason or "将死") .. "）", false, 5)
+        local reason = data.reason or "将死"
+        self:show_game_over_dialog(winner, reason)
     end)
 end
 
@@ -369,7 +393,7 @@ function GameScene:draw_ui()
     love.graphics.setFont(hint_font)
     love.graphics.setColor(0.5, 0.5, 0.6, 1)
 
-    local hint = "点击棋子选中，点击目标位置移动  |  ESC 返回菜单  |  R 重新开始  |  U 悔棋"
+    local hint = "点击棋子选中，点击目标位置移动  |  ESC/P 暂停  |  R 重新开始  |  U 悔棋"
     local hint_w = hint_font:getWidth(hint)
     love.graphics.print(hint, (w - hint_w) / 2, h - 30)
 
@@ -400,6 +424,19 @@ function GameScene:draw_ui()
         love.graphics.print(self.message, (w - msg_w) / 2, h / 2 + 80)
     end
 
+    -- ========== 弹窗 ==========
+    -- 暂停弹窗
+    if self.pause_dialog and self.pause_dialog.visible then
+        Dialog.draw_overlay(0.5)
+        self.pause_dialog:draw()
+    end
+
+    -- 结算弹窗
+    if self.game_over_dialog and self.game_over_dialog.visible then
+        Dialog.draw_overlay(0.6)
+        self.game_over_dialog:draw()
+    end
+
     love.graphics.setFont(love.graphics.newFont(12))
     love.graphics.setColor(1, 1, 1, 1)
 end
@@ -414,16 +451,59 @@ function GameScene:update(dt)
         self.message_timer = self.message_timer - dt
     end
 
-    -- 处理输入
-    self:handle_input()
+    -- 更新所有棋子的动画
+    self:_update_pieces(dt)
+
+    -- 更新弹窗
+    if self.pause_dialog then
+        self.pause_dialog:update(dt)
+    end
+    if self.game_over_dialog then
+        self.game_over_dialog:update(dt)
+    end
+
+    -- 检查动画是否全部完成
+    if self.is_animating then
+        if self:_all_animations_done() then
+            self.is_animating = false
+        end
+    end
+
+    -- 处理输入（动画期间不处理）
+    if not self.is_animating then
+        self:handle_input()
+    end
 
     -- 快捷键
     if Input.is_pressed("cancel") then
-        Logger.debug("GameScene: ESC pressed, returning to menu")
-        SceneManager.switch("menu")
+        -- 如果有结算弹窗，ESC 不处理（弹窗自己处理）
+        if self.game_over_dialog and self.game_over_dialog.visible then
+            self.game_over_dialog:handle_key("escape")
+        elseif self.pause_dialog and self.pause_dialog.visible then
+            -- 暂停弹窗显示时，ESC = 继续游戏（直接关闭弹窗）
+            self.pause_dialog:hide()
+        elseif not self.game_state:is_game_over() then
+            -- 游戏中，ESC 打开暂停菜单
+            self:show_pause_dialog()
+        end
     end
 
-    if Input.is_pressed("r") then
+    if Input.is_pressed("p") and not self.is_animating then
+        if not self.game_state:is_game_over() and not (self.pause_dialog and self.pause_dialog.visible) then
+            self:show_pause_dialog()
+        end
+    end
+
+    -- 回车：如果有弹窗，触发默认按钮
+    if Input.is_pressed("confirm") or Input.is_pressed("return") then
+        if self.game_over_dialog and self.game_over_dialog.visible then
+            self.game_over_dialog:handle_key("return")
+        elseif self.pause_dialog and self.pause_dialog.visible then
+            self.pause_dialog:handle_key("return")
+        end
+    end
+
+    if Input.is_pressed("r") and not self.is_animating then
         self.game_state:reset()
         self.selected_piece = nil
         self.valid_moves = {}
@@ -431,7 +511,7 @@ function GameScene:update(dt)
         self:show_message("已重新开始", false, 1.0)
     end
 
-    if Input.is_pressed("u") then
+    if Input.is_pressed("u") and not self.is_animating then
         local success = self.game_state:undo()
         if success then
             self.selected_piece = nil
@@ -456,6 +536,31 @@ function GameScene:update(dt)
 end
 
 -- ============================================================
+-- 更新所有棋子动画
+-- ============================================================
+
+function GameScene:_update_pieces(dt)
+    for _, piece in ipairs(self.game_state.pieces) do
+        if piece.alive or piece.capturing then
+            piece:update(dt)
+        end
+    end
+end
+
+-- ============================================================
+-- 检查所有动画是否完成
+-- ============================================================
+
+function GameScene:_all_animations_done()
+    for _, piece in ipairs(self.game_state.pieces) do
+        if piece.animating or piece.capturing then
+            return false
+        end
+    end
+    return true
+end
+
+-- ============================================================
 -- 处理输入（点击棋子）
 -- ============================================================
 
@@ -465,6 +570,17 @@ function GameScene:handle_input()
     end
 
     local mx, my = Input.get_mouse_position()
+
+    -- 如果有弹窗，先让弹窗处理点击
+    if self.game_over_dialog and self.game_over_dialog.visible then
+        self.game_over_dialog:handle_click(mx, my)
+        return
+    end
+    if self.pause_dialog and self.pause_dialog.visible then
+        self.pause_dialog:handle_click(mx, my)
+        return
+    end
+
     local bx, by = self.board:screen_to_board(mx, my)
 
     -- 游戏已结束时，点击只显示提示
@@ -540,6 +656,91 @@ function GameScene:_try_move(piece, to_x, to_y)
         -- 走棋失败，显示原因
         self:show_message(reason, true, 1.5)
     end
+end
+
+-- ============================================================
+-- 暂停菜单
+-- ============================================================
+
+function GameScene:show_pause_dialog()
+    if self.pause_dialog and self.pause_dialog.visible then
+        return
+    end
+
+    self.pause_dialog = Dialog.new({
+        title = "游戏暂停",
+        content = "休息一下，喝口茶～",
+        buttons = {
+            {
+                text = "继续游戏",
+                is_default = true,
+                on_click = function(dlg)
+                    dlg:hide()
+                    Logger.debug("GameScene: resume game")
+                end
+            },
+            {
+                text = "重新开始",
+                on_click = function(dlg)
+                    dlg:hide()
+                    self.game_state:reset()
+                    self.selected_piece = nil
+                    self.valid_moves = {}
+                    self.last_move = nil
+                    self:show_message("已重新开始", false, 1.0)
+                end
+            },
+            {
+                text = "返回菜单",
+                is_cancel = true,
+                on_click = function(dlg)
+                    dlg:hide()
+                    SceneManager.switch("menu")
+                end
+            },
+        }
+    })
+
+    Logger.debug("GameScene: pause dialog shown")
+end
+
+-- ============================================================
+-- 胜负结算弹窗
+-- ============================================================
+
+function GameScene:show_game_over_dialog(winner, reason)
+    local winner_name = winner == "red" and "红方" or "黑方"
+
+    self.game_over_dialog = Dialog.new({
+        title = "对局结束",
+        content = winner_name .. "获胜！\n（" .. reason .. "）",
+        buttons = {
+            {
+                text = "再来一局",
+                is_default = true,
+                on_click = function(dlg)
+                    dlg:hide()
+                    self.game_state:reset()
+                    self.selected_piece = nil
+                    self.valid_moves = {}
+                    self.last_move = nil
+                    self.game_over_dialog = nil
+                    Logger.debug("GameScene: new game after game over")
+                end
+            },
+            {
+                text = "返回菜单",
+                is_cancel = true,
+                on_click = function(dlg)
+                    dlg:hide()
+                    self.game_over_dialog = nil
+                    SceneManager.switch("menu")
+                end
+            },
+        }
+    })
+
+    Logger.infof("GameScene: game over - %s wins (%s)", winner, reason)
 end
 
 -- ============================================================
