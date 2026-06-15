@@ -31,8 +31,7 @@ function love.load()
     -- 初始化 game 游戏层
     Game.init()
 
-    love.window.setTitle("romwe_game v" .. Game.version)
-    Core.Logger.info("Game loaded successfully: romwe_game v" .. Game.version)
+    Core.Logger.info("Game loaded successfully")
 end
 
 -- 每帧更新逻辑
