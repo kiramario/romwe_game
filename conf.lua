@@ -6,8 +6,7 @@
 
 function love.conf(t)
     -- ========== 窗口配置 ==========
-    t.window.title = "romwe_game"
-    t.identity = "romwe_game"  -- 窗口标题
+    t.window.title = "Trillion Games 2D Engine - V0"  -- 窗口标题
     t.window.width = 1280          -- 窗口宽度（像素）
     t.window.height = 720          -- 窗口高度（像素）
     t.window.resizable = true      -- 允许用户调整窗口大小

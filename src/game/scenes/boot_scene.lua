@@ -14,10 +14,6 @@ local BootScene = {}
 function BootScene:enter(params)
     Logger.debug("BootScene: enter")
 
-    -- 预加载中文字体（解决中文乱码）
-    _title_font = ResourceManager.get_font("NotoSansSC-Bold.ttc", 56)
-    _subtitle_font = ResourceManager.get_font("NotoSansSC-Regular.ttc", 28)
-
     -- 注册各层的绘制函数
     -- 演示 RenderLayer 的用法
 
@@ -35,7 +31,7 @@ function BootScene:enter(params)
         love.graphics.setColor(1, 1, 1, 1)
         local title_font = love.graphics.newFont(48)
         love.graphics.setFont(title_font)
-        local title = "romwe_game"
+        local title = "Trillion Games 2D Engine"
         local title_w = title_font:getWidth(title)
         love.graphics.print(title, (w - title_w) / 2, h / 2 - 80)
 
@@ -50,7 +46,7 @@ function BootScene:enter(params)
         -- 提示文字
         local hint_font = love.graphics.newFont(16)
         love.graphics.setFont(hint_font)
-        local hint = "按 空格键 进入测试场景"
+        local hint = "按 空格 或 回车 开始游戏"
         local hint_w = hint_font:getWidth(hint)
         love.graphics.setColor(0.5, 0.5, 0.5, 1)
         love.graphics.print(hint, (w - hint_w) / 2, h / 2 + 60)
