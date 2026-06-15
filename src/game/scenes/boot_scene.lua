@@ -31,7 +31,7 @@ function BootScene:enter(params)
         love.graphics.setColor(1, 1, 1, 1)
         local title_font = love.graphics.newFont(48)
         love.graphics.setFont(title_font)
-        local title = "Trillion Games 2D Engine"
+        local title = "romwe_game"
         local title_w = title_font:getWidth(title)
         love.graphics.print(title, (w - title_w) / 2, h / 2 - 80)
 
