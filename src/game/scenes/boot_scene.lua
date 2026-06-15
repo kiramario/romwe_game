@@ -14,6 +14,10 @@ local BootScene = {}
 function BootScene:enter(params)
     Logger.debug("BootScene: enter")
 
+    -- 预加载中文字体（解决中文乱码）
+    _title_font = ResourceManager.get_font("NotoSansSC-Bold.ttc", 56)
+    _subtitle_font = ResourceManager.get_font("NotoSansSC-Regular.ttc", 28)
+
     -- 注册各层的绘制函数
     -- 演示 RenderLayer 的用法
 
